@@ -12,7 +12,7 @@ import threading
 # EXCHANGE
 ############################################
 
-exchange = ccxt.binance({
+exchange = ccxt.kucoin({
     'enableRateLimit': True
 })
 
