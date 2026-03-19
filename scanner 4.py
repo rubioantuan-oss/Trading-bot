@@ -310,7 +310,7 @@ def check_symbol(symbol, btc15):
                 print(f"\nRiesgo: ${round(potential_loss,2)}")
                 print(f"Ganancia estimada: ${round(potential_gain,2)}")
 
-                winsound.Beep(1200,500)
+                print("🔔 ALERTA TRADE")
 
                 active_signals[symbol] = True
 
