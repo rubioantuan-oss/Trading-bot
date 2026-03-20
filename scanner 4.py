@@ -3,10 +3,26 @@ import pandas as pd
 import ta
 import numpy as np
 import time
-import winsound
 import websocket
 import json
 import threading
+
+# 🔵 KEEP ALIVE SERVER (IMPORTANTE)
+from flask import Flask
+from threading import Thread
+
+app = Flask('')
+
+@app.route('/')
+def home():
+    return "Bot activo"
+
+def run():
+    app.run(host='0.0.0.0', port=8080)
+
+def keep_alive():
+    t = Thread(target=run)
+    t.start()
 
 ############################################
 # EXCHANGE
@@ -170,12 +186,10 @@ def liquidity_grab(df):
     last = df.iloc[-1]
     prev = df.iloc[-2]
 
-    grab = (
+    return (
         last['low'] < prev['support'] and
         last['close'] > prev['support']
     )
-
-    return grab
 
 ############################################
 # WHALE VOLUME
@@ -219,7 +233,6 @@ def momentum(df):
 def probability_score(df5, df15, btc, symbol):
 
     score = 0
-
     last = df5.iloc[-1]
 
     if last['ema9'] > last['ema21']:
@@ -249,9 +262,7 @@ def probability_score(df5, df15, btc, symbol):
     if momentum(df5):
         score += 5
 
-    imbalance = liquidity_imbalance(symbol)
-
-    if imbalance > 1.3:
+    if liquidity_imbalance(symbol) > 1.3:
         score += 5
 
     return score
@@ -291,25 +302,13 @@ def check_symbol(symbol, btc15):
                 take_profit = entry_price + (atr * 2)
 
                 risk_amount = capital * risk_percent
-
                 quantity = risk_amount / (entry_price - stop_price)
 
-                potential_loss = quantity * (entry_price - stop_price)
-                potential_gain = quantity * (take_profit - entry_price)
-
                 print(f"\n🔥 SETUP PROBABILIDAD ALTA en {symbol}")
-                print(f"Probabilidad sistema: {prob}%")
-
-                print(f"\nPrecio entrada: {round(entry_price,4)}")
-                print(f"Cantidad: {round(quantity,4)}")
-
-                print("\n🎯 OCO SUGERIDO")
-                print(f"TAKE PROFIT: {round(take_profit,4)}")
-                print(f"STOP LOSS: {round(stop_price,4)}")
-
-                print(f"\nRiesgo: ${round(potential_loss,2)}")
-                print(f"Ganancia estimada: ${round(potential_gain,2)}")
-
+                print(f"Probabilidad: {prob}%")
+                print(f"Entrada: {entry_price}")
+                print(f"TP: {take_profit}")
+                print(f"SL: {stop_price}")
                 print("🔔 ALERTA TRADE")
 
                 active_signals[symbol] = True
@@ -320,7 +319,6 @@ def check_symbol(symbol, btc15):
                 del active_signals[symbol]
 
     except Exception as e:
-
         print(f"error en {symbol}: {e}")
 
 ############################################
@@ -330,6 +328,12 @@ def check_symbol(symbol, btc15):
 thread = threading.Thread(target=start_socket)
 thread.daemon = True
 thread.start()
+
+############################################
+# 🔵 ACTIVAR SERVIDOR WEB
+############################################
+
+keep_alive()
 
 ############################################
 # LOOP
@@ -342,7 +346,6 @@ while True:
     btc15 = get_data('BTC/USDT','15m')
 
     for symbol in symbols:
-
         check_symbol(symbol, btc15)
 
     time.sleep(30)
