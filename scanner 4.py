@@ -6,8 +6,9 @@ import time
 import websocket
 import json
 import threading
+import os
 
-# 🔵 KEEP ALIVE SERVER (IMPORTANTE)
+# 🔵 FLASK SERVER (CORREGIDO PARA REPLIT)
 from flask import Flask
 from threading import Thread
 
@@ -15,17 +16,19 @@ app = Flask('')
 
 @app.route('/')
 def home():
-    return "Bot activo"
+    return "Bot activo 24/7 🚀"
 
 def run():
-    app.run(host='0.0.0.0', port=8080)
+    port = int(os.environ.get("PORT", 8080))  # 🔥 IMPORTANTE
+    app.run(host='0.0.0.0', port=port)
 
 def keep_alive():
     t = Thread(target=run)
+    t.daemon = True
     t.start()
 
 ############################################
-# EXCHANGE
+# EXCHANGE (KUCOIN)
 ############################################
 
 exchange = ccxt.kucoin({
@@ -45,189 +48,93 @@ risk_percent = 0.02
 active_signals = {}
 
 ############################################
-# REAL TIME PRICE STREAM
-############################################
-
-prices = {}
-
-def on_message(ws, message):
-
-    data = json.loads(message)
-
-    symbol = data['s']
-    bid = float(data['b'])
-    ask = float(data['a'])
-
-    prices[symbol] = (bid, ask)
-
-
-def start_socket():
-
-    url = "wss://stream.binance.com:9443/ws/!bookTicker"
-
-    ws = websocket.WebSocketApp(
-        url,
-        on_message=on_message
-    )
-
-    ws.run_forever()
-
-############################################
-# MARKET DATA
+# DATA
 ############################################
 
 def get_data(symbol, timeframe):
 
-    ohlcv = exchange.fetch_ohlcv(symbol, timeframe=timeframe, limit=200)
+    try:
+        ohlcv = exchange.fetch_ohlcv(symbol, timeframe=timeframe, limit=200)
 
-    df = pd.DataFrame(
-        ohlcv,
-        columns=['time','open','high','low','close','volume']
-    )
+        df = pd.DataFrame(
+            ohlcv,
+            columns=['time','open','high','low','close','volume']
+        )
 
-    df['ema9'] = ta.trend.ema_indicator(df['close'], 9)
-    df['ema21'] = ta.trend.ema_indicator(df['close'], 21)
-    df['ema200'] = ta.trend.ema_indicator(df['close'], 200)
+        df['ema9'] = ta.trend.ema_indicator(df['close'], 9)
+        df['ema21'] = ta.trend.ema_indicator(df['close'], 21)
+        df['ema200'] = ta.trend.ema_indicator(df['close'], 200)
 
-    df['rsi'] = ta.momentum.rsi(df['close'], 14)
+        df['rsi'] = ta.momentum.rsi(df['close'], 14)
 
-    df['atr'] = ta.volatility.average_true_range(
-        df['high'], df['low'], df['close'], window=14
-    )
+        df['atr'] = ta.volatility.average_true_range(
+            df['high'], df['low'], df['close'], window=14
+        )
 
-    df['adx'] = ta.trend.adx(
-        df['high'], df['low'], df['close'], 14
-    )
+        df['adx'] = ta.trend.adx(
+            df['high'], df['low'], df['close'], 14
+        )
 
-    df['vol_avg'] = df['volume'].rolling(20).mean()
+        df['vol_avg'] = df['volume'].rolling(20).mean()
 
-    df['resistance'] = df['high'].rolling(20).max()
-    df['support'] = df['low'].rolling(20).min()
+        df['resistance'] = df['high'].rolling(20).max()
+        df['support'] = df['low'].rolling(20).min()
 
-    return df
+        return df
+
+    except Exception as e:
+        print(f"Error data {symbol}: {e}")
+        return None
 
 ############################################
-# LIQUIDITY FILTER
+# FILTROS
 ############################################
 
 def liquidity_filter(symbol):
-
     try:
-
         ticker = exchange.fetch_ticker(symbol)
-
         volume = ticker['quoteVolume']
-
-        if volume is None:
-            return False
-
-        return volume > 1000000
-
+        return volume and volume > 1000000
     except:
         return False
 
-############################################
-# ORDERBOOK IMBALANCE
-############################################
-
 def liquidity_imbalance(symbol):
-
     try:
-
         book = exchange.fetch_order_book(symbol, 10)
-
         bid_vol = sum([b[1] for b in book['bids']])
         ask_vol = sum([a[1] for a in book['asks']])
-
-        if ask_vol == 0:
-            return 0
-
-        return bid_vol / ask_vol
-
+        return bid_vol / ask_vol if ask_vol != 0 else 0
     except:
         return 0
 
 ############################################
-# SPREAD FILTER
-############################################
-
-def spread_filter(symbol):
-
-    key = symbol.replace("/","")
-
-    if key not in prices:
-        return False
-
-    bid, ask = prices[key]
-
-    if bid == 0 or ask == 0:
-        return False
-
-    spread = (ask - bid) / ask
-
-    return spread < 0.002
-
-############################################
-# TREND
+# ESTRATEGIA
 ############################################
 
 def is_bullish(df):
-
     last = df.iloc[-1]
-
     return last['ema9'] > last['ema21'] and last['close'] > last['ema200']
 
-############################################
-# LIQUIDITY GRAB
-############################################
-
 def liquidity_grab(df):
-
     last = df.iloc[-1]
     prev = df.iloc[-2]
-
-    return (
-        last['low'] < prev['support'] and
-        last['close'] > prev['support']
-    )
-
-############################################
-# WHALE VOLUME
-############################################
+    return last['low'] < prev['support'] and last['close'] > prev['support']
 
 def whale_volume(df):
-
     last = df.iloc[-1]
     avg = df['vol_avg'].iloc[-1]
-
-    if avg == 0 or np.isnan(avg):
-        return False
-
-    return last['volume'] > avg * 2.5
-
-############################################
-# MOMENTUM
-############################################
+    return avg and not np.isnan(avg) and last['volume'] > avg * 2.5
 
 def momentum(df):
-
     last3 = df.tail(3)
-
-    price_up = (
+    return (
         last3['close'].iloc[2] >
         last3['close'].iloc[1] >
         last3['close'].iloc[0]
     )
 
-    vol_up = (
-        last3['volume'].iloc[2] >
-        last3['volume'].iloc[1]
-    )
-
-    return price_up and vol_up
-
 ############################################
-# PROBABILITY ENGINE
+# PROBABILIDAD
 ############################################
 
 def probability_score(df5, df15, btc, symbol):
@@ -235,35 +142,16 @@ def probability_score(df5, df15, btc, symbol):
     score = 0
     last = df5.iloc[-1]
 
-    if last['ema9'] > last['ema21']:
-        score += 15
-
-    if last['close'] > last['ema200']:
-        score += 15
-
-    if 45 <= last['rsi'] <= 65:
-        score += 10
-
-    if last['adx'] > 20:
-        score += 10
-
-    if whale_volume(df5):
-        score += 15
-
-    if liquidity_grab(df5):
-        score += 10
-
-    if is_bullish(df15):
-        score += 10
-
-    if is_bullish(btc):
-        score += 5
-
-    if momentum(df5):
-        score += 5
-
-    if liquidity_imbalance(symbol) > 1.3:
-        score += 5
+    if last['ema9'] > last['ema21']: score += 15
+    if last['close'] > last['ema200']: score += 15
+    if 45 <= last['rsi'] <= 65: score += 10
+    if last['adx'] > 20: score += 10
+    if whale_volume(df5): score += 15
+    if liquidity_grab(df5): score += 10
+    if is_bullish(df15): score += 10
+    if is_bullish(btc): score += 5
+    if momentum(df5): score += 5
+    if liquidity_imbalance(symbol) > 1.3: score += 5
 
     return score
 
@@ -278,74 +166,64 @@ def check_symbol(symbol, btc15):
         if not liquidity_filter(symbol):
             return
 
-        if not spread_filter(symbol):
-            return
-
         df5 = get_data(symbol,'5m')
         df15 = get_data(symbol,'15m')
 
-        last = df5.iloc[-1]
+        if df5 is None or df15 is None:
+            return
 
+        last = df5.iloc[-1]
         prob = probability_score(df5, df15, btc15, symbol)
 
-        if prob >= 70:
+        if prob >= 70 and symbol not in active_signals:
 
-            if symbol not in active_signals:
+            entry = last['close']
+            atr = last['atr']
 
-                entry_price = last['close']
-                atr = last['atr']
+            if np.isnan(atr):
+                return
 
-                if np.isnan(atr):
-                    return
+            sl = entry - (atr * 1.2)
+            tp = entry + (atr * 2)
 
-                stop_price = entry_price - (atr * 1.2)
-                take_profit = entry_price + (atr * 2)
+            print(f"\n🔥 {symbol}")
+            print(f"Probabilidad: {prob}%")
+            print(f"Entrada: {entry}")
+            print(f"TP: {tp}")
+            print(f"SL: {sl}")
+            print("🚀 TRADE LISTO")
 
-                risk_amount = capital * risk_percent
-                quantity = risk_amount / (entry_price - stop_price)
+            active_signals[symbol] = True
 
-                print(f"\n🔥 SETUP PROBABILIDAD ALTA en {symbol}")
-                print(f"Probabilidad: {prob}%")
-                print(f"Entrada: {entry_price}")
-                print(f"TP: {take_profit}")
-                print(f"SL: {stop_price}")
-                print("🔔 ALERTA TRADE")
-
-                active_signals[symbol] = True
-
-        else:
-
-            if symbol in active_signals:
-                del active_signals[symbol]
+        elif prob < 70 and symbol in active_signals:
+            del active_signals[symbol]
 
     except Exception as e:
-        print(f"error en {symbol}: {e}")
+        print(f"Error {symbol}: {e}")
 
 ############################################
-# START SOCKET
-############################################
-
-thread = threading.Thread(target=start_socket)
-thread.daemon = True
-thread.start()
-
-############################################
-# 🔵 ACTIVAR SERVIDOR WEB
+# START
 ############################################
 
 keep_alive()
 
-############################################
-# LOOP
-############################################
+print("🚀 BOT INICIADO 24/7")
 
 while True:
 
-    print("\n🔎 Escaneando mercado institucional...")
+    try:
+        print("\n🔎 Escaneando mercado...")
 
-    btc15 = get_data('BTC/USDT','15m')
+        btc15 = get_data('BTC/USDT','15m')
 
-    for symbol in symbols:
-        check_symbol(symbol, btc15)
+        if btc15 is None:
+            continue
 
-    time.sleep(30)
+        for symbol in symbols:
+            check_symbol(symbol, btc15)
+
+        time.sleep(30)
+
+    except Exception as e:
+        print("ERROR LOOP:", e)
+        time.sleep(10)
